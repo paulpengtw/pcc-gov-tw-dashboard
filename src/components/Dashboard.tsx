@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Search } from 'lucide-react';
-import { fetchProcurementData } from '../api';
-import { ProcurementRecord, UnitCount } from '../types';
+import { ProcurementRecord, UnitCount, ApiResponse } from '../types';
+
+const isUnitId = (unitName: string) => {
+  // Match any of these patterns:
+  // 1. Contains both letters and numbers (e.g., "A.29.1")
+  // 2. Starts with a number (e.g., "29.1")
+  // 3. Contains only numbers and punctuation (e.g., "1.2.3")
+  return /[A-Za-z].*\d|\d.*[A-Za-z]/.test(unitName) || // Pattern 1
+         /^\d/.test(unitName) || // Pattern 2
+         /^[\d\.\-]+$/.test(unitName); // Pattern 3
+};
 
 export default function Dashboard() {
   const [companyId, setCompanyId] = useState('05076416');
@@ -9,7 +18,40 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unitCounts, setUnitCounts] = useState<UnitCount[]>([]);
-  const [rawData, setRawData] = useState<any>(null);
+  const [unitNames, setUnitNames] = useState<Record<string, string>>({});
+
+  const fetchUnitName = async (unitId: string) => {
+    try {
+      console.log('Fetching unit name for ID:', unitId);
+      const response = await fetch(`https://pcc.g0v.ronny.tw/api/listbyunit?unit_id=${unitId}`);
+      if (!response.ok) {
+        console.log('First API call failed for unit ID:', unitId);
+        return null;
+      }
+      
+      const data = await response.json();
+      console.log('First API response:', data);
+      
+      if (data.records && data.records.length > 0) {
+        console.log('Tender API URL:', data.records[0].tender_api_url);
+        const tenderResponse = await fetch(data.records[0].tender_api_url);
+        if (!tenderResponse.ok) {
+          console.log('Second API call failed for unit ID:', unitId);
+          return null;
+        }
+        
+        const tenderData = await tenderResponse.json();
+        console.log('Tender data:', tenderData);
+        const unitName = tenderData.records?.[0]?.detail?.["機關資料:機關名稱"] || null;
+        console.log('Found unit name:', unitName);
+        return unitName;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error fetching unit name:', error);
+      return null;
+    }
+  };
 
   const processData = (records: ProcurementRecord[]) => {
     const unitMap = new Map<string, UnitCount>();
@@ -17,10 +59,12 @@ export default function Dashboard() {
     records.forEach((record) => {
       const year = record.date.toString().substring(0, 4);
       const unit = record.unit_name;
+      const unitId = record.unit_id;
 
       if (!unitMap.has(unit)) {
         unitMap.set(unit, {
           unit_name: unit,
+          unit_id: unitId,
           count: 0,
           years: {},
         });
@@ -32,17 +76,48 @@ export default function Dashboard() {
     });
 
     return Array.from(unitMap.values())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+      .sort((a, b) => b.count - a.count);
   };
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchProcurementData(companyId);
-      setRawData(data);
-      setUnitCounts(processData(data.records));
+      
+      let page = 1;
+      let keepFetching = true;
+      const allRecords: ProcurementRecord[] = [];
+
+      while (keepFetching) {
+        const response = await fetch(
+          `https://pcc.g0v.ronny.tw/api/searchbycompanyid?query=${companyId}&page=${page}`
+        );
+        
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        
+        const data: ApiResponse = await response.json();
+        
+        if (!data.records || data.records.length === 0) {
+          break;
+        }
+
+        const recentRecords = data.records.filter((r) => {
+          const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
+          return recordYear >= new Date().getFullYear() - 3;
+        });
+
+        allRecords.push(...recentRecords);
+
+        if (recentRecords.length < data.records.length) {
+          keepFetching = false;
+        } else {
+          page++;
+        }
+      }
+
+      setUnitCounts(processData(allRecords));
     } catch (err: any) {
       setError(`Failed to fetch data. Please try again. ${err.message || err}`);
     } finally {
@@ -53,6 +128,30 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
   }, [companyId]);
+
+  useEffect(() => {
+    const fetchUnitNames = async () => {
+      const newUnitNames: Record<string, string> = {};
+      
+      for (const unit of unitCounts) {
+        console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
+        if (isUnitId(unit.unit_name) && unit.unit_id) {
+          const actualName = await fetchUnitName(unit.unit_id);
+          console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
+          if (actualName) {
+            newUnitNames[unit.unit_name] = actualName;
+          }
+        }
+      }
+      
+      console.log('Final unit names:', newUnitNames);
+      setUnitNames(newUnitNames);
+    };
+
+    if (unitCounts.length > 0) {
+      fetchUnitNames();
+    }
+  }, [unitCounts]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,7 +228,7 @@ export default function Dashboard() {
                       className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
                     >
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {unit.unit_name}
+                        {unitNames[unit.unit_name] || unit.unit_name}
                       </td>
                       {years.map((year) => (
                         <td
@@ -147,12 +246,6 @@ export default function Dashboard() {
                 </tbody>
               </table>
             </div>
-          )}
-
-          {rawData && (
-            <pre className="mt-4 bg-gray-100 p-4 rounded">
-              {JSON.stringify(rawData, null, 2)}
-            </pre>
           )}
         </div>
       </div>

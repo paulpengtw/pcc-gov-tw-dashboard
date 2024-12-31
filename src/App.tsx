@@ -18,10 +18,10 @@ function App() {
 
 export default App;
 
-export async function fetchProcurementData(companyId: string): Promise<ApiResponse> {
+export async function fetchProcurementData(companyId: string, page: number = 1): Promise<ApiResponse> {
   try {
     const response = await fetch(
-      `https://pcc.g0v.ronny.tw/api/searchbycompanyid?query=${companyId}&page=1`
+      `https://pcc.g0v.ronny.tw/api/searchbycompanyid?query=${companyId}&page=${page}`
     );
     if (!response.ok) {
       console.error('Network response was not ok', response.status, response.statusText);
@@ -41,19 +41,35 @@ const fetchData = async () => {
     setLoading(true);
     setError(null);
     console.log('Fetching data for companyId:', companyId);
-    const data = await fetchProcurementData(companyId);
-    const filtered = data.records.filter((r) => {
-      const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
-      return recordYear >= new Date().getFullYear() - 3;
-    });
-    const grouped = filtered.reduce((acc, curr) => {
-      acc[curr.unit_name] = (acc[curr.unit_name] || 0) + 1;
-      return acc;
-    }, {});
+    let page = 1;
+    let keepFetching = true;
+    const allRecords: ProcurementRecord[] = [];
+
+    while (keepFetching) {
+      const data = await fetchProcurementData(companyId, page);
+      const recentRecords = data.records.filter((r) => {
+        const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
+        return recordYear >= new Date().getFullYear() - 3;
+      });
+
+      allRecords.push(...recentRecords);
+
+      if (recentRecords.length < data.records.length) {
+        keepFetching = false;
+      } else {
+        page++;
+      }
+    }
+
     setTableData(
-      Object.entries(grouped).map(([unit_name, count]) => ({ unit_name, count }))
+      Object.entries(
+        allRecords.reduce((acc, curr) => {
+          acc[curr.unit_name] = (acc[curr.unit_name] || 0) + 1;
+          return acc;
+        }, {})
+      ).map(([unit_name, count]) => ({ unit_name, count }))
     );
-    setUnitCounts(processData(data.records));
+    setUnitCounts(processData(allRecords));
   } catch (err) {
     console.error('Fetch data error:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';
