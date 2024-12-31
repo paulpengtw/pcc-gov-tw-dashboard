@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [unitCounts, setUnitCounts] = useState<UnitCount[]>([]);
   const [unitNames, setUnitNames] = useState<Record<string, string>>({});
+  const [fetchingNames, setFetchingNames] = useState(false);
 
   const fetchUnitName = async (unitId: string) => {
     try {
@@ -129,25 +130,27 @@ export default function Dashboard() {
     fetchData();
   }, [companyId]);
 
-  useEffect(() => {
-    const fetchUnitNames = async () => {
-      const newUnitNames: Record<string, string> = {};
-      
-      for (const unit of unitCounts) {
-        console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
-        if (isUnitId(unit.unit_name) && unit.unit_id) {
-          const actualName = await fetchUnitName(unit.unit_id);
-          console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
-          if (actualName) {
-            newUnitNames[unit.unit_name] = actualName;
-          }
+  const fetchUnitNames = async () => {
+    setFetchingNames(true);
+    const newUnitNames: Record<string, string> = {};
+    
+    for (const unit of unitCounts) {
+      console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
+      if (isUnitId(unit.unit_name) && unit.unit_id) {
+        const actualName = await fetchUnitName(unit.unit_id);
+        console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
+        if (actualName) {
+          newUnitNames[unit.unit_name] = actualName;
         }
       }
-      
-      console.log('Final unit names:', newUnitNames);
-      setUnitNames(newUnitNames);
-    };
+    }
+    
+    console.log('Final unit names:', newUnitNames);
+    setUnitNames(newUnitNames);
+    setFetchingNames(false);
+  };
 
+  useEffect(() => {
     if (unitCounts.length > 0) {
       fetchUnitNames();
     }
@@ -185,6 +188,25 @@ export default function Dashboard() {
                   <Search size={20} />
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={fetchUnitNames}
+                disabled={fetchingNames || unitCounts.length === 0}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  fetchingNames || unitCounts.length === 0
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                }`}
+              >
+                {fetchingNames ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    Fetching Names...
+                  </span>
+                ) : (
+                  'Refresh Unit Names'
+                )}
+              </button>
             </form>
           </div>
 
