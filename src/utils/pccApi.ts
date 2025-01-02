@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Search } from 'lucide-react';
-import { ProcurementRecord, UnitCount, ApiResponse } from '../types';
 
 const isUnitId = (unitName: string) => {
   // Match any of these patterns:
@@ -12,49 +11,42 @@ const isUnitId = (unitName: string) => {
          /^[\d\.\-]+$/.test(unitName); // Pattern 3
 };
 
-interface CompanyNameKey {
-  [key: string]: string[];
-}
-
-interface CompanyIdKey {
-  [key: string]: string[];
-}
-
-interface Companies {
-  ids: string[];
-  names: string[];
-  id_key: CompanyIdKey;
-  name_key: CompanyNameKey;
-}
-
-interface Brief {
-  type: string;
-  title: string;
-  companies: Companies;
-}
-
-interface ProcurementData {
+interface WinningBid {
   date: number;
-  brief: Brief;
+  brief: {
+    type: string;
+    title: string;
+    companies: {
+      ids: string[];
+      names: string[];
+      name_key: {
+        [key: string]: string[];
+      };
+    };
+  };
   unit_name: string;
   unit_id: string;
+  job_number: string;
+  tender_api_url: string;
+  detail?: {
+    url?: string;
+  };
 }
 
-export default function Dashboard() {
-  const [companyId, setCompanyId] = useState('05076416');
-  const [inputValue, setInputValue] = useState('05076416');
+export default function WinningBids() {
+  const [companyId, setCompanyId] = useState('');
+  const [winningBids, setWinningBids] = useState<WinningBid[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unitCounts, setUnitCounts] = useState<UnitCount[]>([]);
   const [unitNames, setUnitNames] = useState<Record<string, string>>({});
   const [fetchingNames, setFetchingNames] = useState(false);
 
-  const fetchUnitName = async (unitId: string) => {
+  const fetchUnitName = async (bid: WinningBid) => {
     try {
-      console.log('Fetching unit name for ID:', unitId);
-      const response = await fetch(`https://pcc.g0v.ronny.tw/api/listbyunit?unit_id=${unitId}`);
+      console.log('Fetching unit name for ID:', bid.unit_id);
+      const response = await fetch(`https://pcc.g0v.ronny.tw/api/listbyunit?unit_id=${bid.unit_id}`);
       if (!response.ok) {
-        console.log('First API call failed for unit ID:', unitId);
+        console.log('First API call failed for unit ID:', bid.unit_id);
         return null;
       }
       
@@ -66,13 +58,13 @@ export default function Dashboard() {
         console.log('Tender API URL:', tenderApiUrl);
         const tenderResponse = await fetch(tenderApiUrl);
         if (!tenderResponse.ok) {
-          console.log('Second API call failed for unit ID:', unitId);
+          console.log('Second API call failed for unit ID:', bid.unit_id);
           return null;
         }
         
         const tenderData = await tenderResponse.json();
         console.log('Tender data:', tenderData);
-        const unitName = tenderData.records?.[0]?.detail?.["機關資料：機關名稱"] || null;
+        const unitName = tenderData.records?.[0]?.detail?.["機關資料:機關名稱"] || null;
         console.log('Found unit name:', unitName);
         return unitName;
       }
@@ -83,120 +75,21 @@ export default function Dashboard() {
     }
   };
 
-  const processData = (records: ProcurementData[]) => {
-    const unitMap = new Map<string, UnitCount>();
-
-    records.forEach((record) => {
-      // Check if the company won the bid
-      const companyWonBid = Object.entries(record.brief.companies.name_key).some(([name, keys]) => {
-        // Find the corresponding company ID
-        const companyIdEntry = Object.entries(record.brief.companies.id_key).find(([id, idKeys]) => {
-          // Match the bidder number (e.g., "投標廠商 1") between name_key and id_key
-          const nameKey = keys[0];  // e.g., "投標廠商：投標廠商 1:廠商名稱"
-          const idKey = idKeys[0];  // e.g., "投標廠商：投標廠商 1:廠商代碼"
-          return nameKey.split(':')[1] === idKey.split(':')[1];
-        });
-
-        // Only count if this is our target company and they won the bid
-        return companyIdEntry?.[0] === companyId && keys.some((key: string) => key.includes(':得標廠商'));
-      });
-
-      if (!companyWonBid) {
-        return;  // Skip this record if the company didn't win the bid
-      }
-
-      const year = record.date.toString().substring(0, 4);
-      const unit = record.unit_name;
-      const unitId = record.unit_id;
-
-      if (!unitMap.has(unit)) {
-        unitMap.set(unit, {
-          unit_name: unit,
-          unit_id: unitId,
-          years: {},
-        });
-      }
-
-      const unitData = unitMap.get(unit)!;
-      unitData.years[year] = (unitData.years[year] || 0) + 1;
-    });
-
-    // Sort by sum of last three years
-    const currentYear = new Date().getFullYear();
-    const lastThreeYears = [currentYear - 2, currentYear - 1, currentYear];
-
-    return Array.from(unitMap.values())
-      .sort((a, b) => {
-        const sumA = lastThreeYears.reduce((sum, year) => sum + (a.years[year] || 0), 0);
-        const sumB = lastThreeYears.reduce((sum, year) => sum + (b.years[year] || 0), 0);
-        return sumB - sumA;
-      });
-  };
-
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      let page = 1;
-      let keepFetching = true;
-      const allRecords: ProcurementData[] = [];
-
-      while (keepFetching) {
-        const response = await fetch(
-          `https://pcc.g0v.ronny.tw/api/searchbycompanyid?query=${companyId}&page=${page}`
-        );
-        
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
-        
-        const data: ApiResponse = await response.json();
-        
-        if (!data.records || data.records.length === 0) {
-          break;
-        }
-
-        const recentRecords = data.records.filter((r: ProcurementData) => {
-          const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
-          return recordYear >= new Date().getFullYear() - 3;
-        });
-
-        allRecords.push(...recentRecords);
-
-        if (recentRecords.length < data.records.length) {
-          keepFetching = false;
-        } else {
-          page++;
-        }
-      }
-
-      setUnitCounts(processData(allRecords));
-    } catch (err: any) {
-      setError(`Failed to fetch data. Please try again. ${err.message || err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, [companyId]);
-
   const fetchUnitNames = async () => {
+    console.log('Starting to fetch unit names');
     setFetchingNames(true);
     
-    for (const unit of unitCounts) {
-      console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
-      if (isUnitId(unit.unit_name) && unit.unit_id) {
-        const actualName = await fetchUnitName(unit.unit_id);
-        console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
+    for (const bid of winningBids) {
+      console.log('Checking unit:', bid.unit_name, 'isUnitId:', isUnitId(bid.unit_name));
+      if (isUnitId(bid.unit_name) && bid.unit_id) {
+        const actualName = await fetchUnitName(bid);
+        console.log('Got actual name:', actualName, 'for unit:', bid.unit_name);
         if (actualName) {
           setUnitNames(prev => ({
             ...prev,
-            [unit.unit_name]: actualName
+            [bid.unit_name]: actualName
           }));
-          console.log(`${unit.unit_name} => ${actualName}`);
+          console.log(`${bid.unit_name} => ${actualName}`);
         }
       }
     }
@@ -204,119 +97,226 @@ export default function Dashboard() {
     setFetchingNames(false);
   };
 
-  useEffect(() => {
-    if (unitCounts.length > 0) {
-      fetchUnitNames();
-    }
-  }, [unitCounts]);
+  const fetchWinningBids = async () => {
+    if (!companyId.trim()) return;
+    
+    setLoading(true);
+    setError(null);
+    setWinningBids([]); // Clear previous results
+    
+    try {
+      const threeYearsAgo = new Date();
+      threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+      const threeYearsAgoTimestamp = parseInt(
+        threeYearsAgo.getFullYear().toString() +
+        (threeYearsAgo.getMonth() + 1).toString().padStart(2, '0') +
+        threeYearsAgo.getDate().toString().padStart(2, '0')
+      );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCompanyId(inputValue);
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        console.log('Fetching page:', currentPage);
+        const response = await fetch(
+          `https://pcc.g0v.ronny.tw/api/searchbycompanyid?query=${companyId}&page=${currentPage}`
+        );
+        const data = await response.json();
+        
+        // Filter winning bids from the last 3 years
+        const winningRecords = data.records.filter((record: WinningBid) => {
+          const companyNames = record.brief.companies.names;
+          const isWinningBid = companyNames.some(name => 
+            record.brief.companies.name_key[name]?.some(role => 
+              role.includes('得標廠商')
+            )
+          );
+          return isWinningBid && record.date >= threeYearsAgoTimestamp;
+        });
+
+        // Process each winning record one by one
+        for (const record of winningRecords) {
+          try {
+            console.log('Fetching tender details for:', record.job_number);
+            const tenderResponse = await fetch(
+              `https://pcc.g0v.ronny.tw/api/tender?unit_id=${record.unit_id}&job_number=${record.job_number}`
+            );
+            const tenderData = await tenderResponse.json();
+            
+            const recordWithDetails = tenderData.records?.[0]?.detail?.url
+              ? {
+                  ...record,
+                  detail: {
+                    url: tenderData.records[0].detail.url
+                  }
+                }
+              : record;
+
+            // Append each record as it's processed
+            setWinningBids(prev => [...prev, recordWithDetails]);
+          } catch (err) {
+            console.error('Error fetching tender details:', err);
+            // Still add the record even if tender details fail
+            setWinningBids(prev => [...prev, record]);
+          }
+        }
+
+        // Check if we should continue to next page
+        hasMorePages = data.records.some((record: WinningBid) => record.date >= threeYearsAgoTimestamp) 
+          && currentPage < data.total_pages;
+        currentPage++;
+      }
+      
+    } catch (err) {
+      setError('Failed to fetch data. Please try again.');
+      console.error('Error:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const currentYear = new Date().getFullYear();
-  const years = [currentYear - 2, currentYear - 1, currentYear];
+  useEffect(() => {
+    if (winningBids.length > 0) {
+      fetchUnitNames();
+    }
+  }, [winningBids]);
+
+  const formatDate = (date: number) => {
+    const dateStr = date.toString();
+    return `${dateStr.slice(0, 4)}/${dateStr.slice(4, 6)}/${dateStr.slice(6, 8)}`;
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4">
-              標案贏家 Dashboard
-            </h1>
-            <form onSubmit={handleSubmit} className="flex gap-4">
-              <div className="relative flex-1 max-w-xs">
-                <input
-                  type="text"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      setCompanyId(inputValue);
-                    }
-                  }}
-                  placeholder="Enter Company ID"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <button
-                  type="submit"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  <Search size={20} />
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={fetchUnitNames}
-                disabled={fetchingNames || unitCounts.length === 0}
-                className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                  fetchingNames || unitCounts.length === 0
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
-                }`}
-              >
-                {fetchingNames ? 'Fetching Names...' : 'Refresh Unit Names'}
-              </button>
-            </form>
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setInputValue('05076416')}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-              >
-                資策會
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputValue('04170821')}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-              >
-                電腦公會
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputValue('02750963')}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-              >
-                工研院
-              </button>
-            </div>
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-4">Winning Bids Search</h1>
+        <div className="flex gap-4">
+          <div className="relative flex-1 max-w-md">
+            <input
+              type="text"
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  fetchWinningBids();
+                }
+              }}
+              placeholder="Enter Company ID"
+              className="w-full px-4 py-2 border rounded-lg pr-10"
+            />
+            <button
+              onClick={fetchWinningBids}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              aria-label="Search"
+            >
+              <Search className="w-5 h-5 text-gray-500" />
+            </button>
           </div>
+          <button
+            onClick={fetchUnitNames}
+            disabled={fetchingNames || winningBids.length === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${
+              fetchingNames || winningBids.length === 0
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+            }`}
+          >
+            {fetchingNames ? 'Fetching Names...' : 'Refresh Unit Names'}
+          </button>
+        </div>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setCompanyId('05076416');
+              fetchWinningBids();
+            }}
+            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+          >
+            資策會
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCompanyId('04170821');
+              fetchWinningBids();
+            }}
+            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+          >
+            電腦公會
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCompanyId('02750963');
+              fetchWinningBids();
+            }}
+            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+          >
+            工研院
+          </button>
+        </div>
+      </div>
 
-          {loading && (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
-            </div>
-          )}
+      {loading && (
+        <div className="text-center py-4">Loading...</div>
+      )}
 
-          {error && (
-            <div className="bg-red-50 text-red-700 p-4 rounded-lg mb-6">
-              {error}
-            </div>
-          )}
+      {error && (
+        <div className="text-red-500 mb-4">{error}</div>
+      )}
 
-          {!loading && !error && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead>
-                  <tr>
-                    <th className="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Unit Name
-                    </th>
-                    {years.map((year) => (
-                      <th
-                        key={year}
-                        className="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+      {winningBids.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full bg-white border rounded-lg">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Number</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {winningBids.map((bid, index) => (
+                <tr key={index} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {formatDate(bid.date)}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-900">
+                    {bid.brief.title}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {bid.brief.type}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {unitNames[bid.unit_name] || bid.unit_name}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {bid.detail?.url ? (
+                      <a 
+                        href={bid.detail.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
                       >
-                        {year}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                        {bid.job_number}
+                      </a>
+                    ) : (
+                      bid.job_number
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}               <tbody className="bg-white divide-y divide-gray-200">
                   {unitCounts.map((unit, index) => (
                     <tr
                       key={unit.unit_name}
