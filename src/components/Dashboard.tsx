@@ -62,8 +62,9 @@ export default function Dashboard() {
       console.log('First API response:', data);
       
       if (data.records && data.records.length > 0) {
-        console.log('Tender API URL:', data.records[0].tender_api_url);
-        const tenderResponse = await fetch(data.records[0].tender_api_url);
+        const tenderApiUrl = data.records[0].tender_api_url.replace('http://', 'https://');
+        console.log('Tender API URL:', tenderApiUrl);
+        const tenderResponse = await fetch(tenderApiUrl);
         if (!tenderResponse.ok) {
           console.log('Second API call failed for unit ID:', unitId);
           return null;
