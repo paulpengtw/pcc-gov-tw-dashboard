@@ -12,6 +12,34 @@ const isUnitId = (unitName: string) => {
          /^[\d\.\-]+$/.test(unitName); // Pattern 3
 };
 
+interface CompanyNameKey {
+  [key: string]: string[];
+}
+
+interface CompanyIdKey {
+  [key: string]: string[];
+}
+
+interface Companies {
+  ids: string[];
+  names: string[];
+  id_key: CompanyIdKey;
+  name_key: CompanyNameKey;
+}
+
+interface Brief {
+  type: string;
+  title: string;
+  companies: Companies;
+}
+
+interface ProcurementData {
+  date: number;
+  brief: Brief;
+  unit_name: string;
+  unit_id: string;
+}
+
 export default function Dashboard() {
   const [companyId, setCompanyId] = useState('05076416');
   const [inputValue, setInputValue] = useState('05076416');
@@ -54,10 +82,28 @@ export default function Dashboard() {
     }
   };
 
-  const processData = (records: ProcurementRecord[]) => {
+  const processData = (records: ProcurementData[]) => {
     const unitMap = new Map<string, UnitCount>();
 
     records.forEach((record) => {
+      // Check if the company won the bid
+      const companyWonBid = Object.entries(record.brief.companies.name_key).some(([name, keys]) => {
+        // Find the corresponding company ID
+        const companyIdEntry = Object.entries(record.brief.companies.id_key).find(([id, idKeys]) => {
+          // Match the bidder number (e.g., "投標廠商 1") between name_key and id_key
+          const nameKey = keys[0];  // e.g., "投標廠商:投標廠商 1:廠商名稱"
+          const idKey = idKeys[0];  // e.g., "投標廠商:投標廠商 1:廠商代碼"
+          return nameKey.split(':')[1] === idKey.split(':')[1];
+        });
+
+        // Only count if this is our target company and they won the bid
+        return companyIdEntry?.[0] === companyId && keys.some((key: string) => key.includes(':得標廠商'));
+      });
+
+      if (!companyWonBid) {
+        return;  // Skip this record if the company didn't win the bid
+      }
+
       const year = record.date.toString().substring(0, 4);
       const unit = record.unit_name;
       const unitId = record.unit_id;
@@ -87,7 +133,7 @@ export default function Dashboard() {
       
       let page = 1;
       let keepFetching = true;
-      const allRecords: ProcurementRecord[] = [];
+      const allRecords: ProcurementData[] = [];
 
       while (keepFetching) {
         const response = await fetch(
@@ -104,7 +150,7 @@ export default function Dashboard() {
           break;
         }
 
-        const recentRecords = data.records.filter((r) => {
+        const recentRecords = data.records.filter((r: ProcurementData) => {
           const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
           return recordYear >= new Date().getFullYear() - 3;
         });

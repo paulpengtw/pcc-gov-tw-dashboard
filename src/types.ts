@@ -12,6 +12,34 @@ const isUnitId = (unitName: string) => {
          /^[\d\.\-]+$/.test(unitName); // Pattern 3
 };
 
+interface CompanyNameKey {
+  [key: string]: string[];
+}
+
+interface CompanyIdKey {
+  [key: string]: string[];
+}
+
+interface Companies {
+  ids: string[];
+  names: string[];
+  id_key: CompanyIdKey;
+  name_key: CompanyNameKey;
+}
+
+interface Brief {
+  type: string;
+  title: string;
+  companies: Companies;
+}
+
+interface ProcurementData {
+  date: number;
+  brief: Brief;
+  unit_name: string;
+  unit_id: string;
+}
+
 export default function Dashboard() {
   const [companyId, setCompanyId] = useState('05076416');
   const [inputValue, setInputValue] = useState('05076416');
@@ -19,6 +47,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [unitCounts, setUnitCounts] = useState<UnitCount[]>([]);
   const [unitNames, setUnitNames] = useState<Record<string, string>>({});
+  const [fetchingNames, setFetchingNames] = useState(false);
 
   const fetchUnitName = async (unitId: string) => {
     try {
@@ -53,10 +82,28 @@ export default function Dashboard() {
     }
   };
 
-  const processData = (records: ProcurementRecord[]) => {
+  const processData = (records: ProcurementData[]) => {
     const unitMap = new Map<string, UnitCount>();
 
     records.forEach((record) => {
+      // Check if the company won the bid
+      const companyWonBid = Object.entries(record.brief.companies.name_key).some(([name, keys]) => {
+        // Find the corresponding company ID
+        const companyIdEntry = Object.entries(record.brief.companies.id_key).find(([id, idKeys]) => {
+          // Match the bidder number (e.g., "投標廠商 1") between name_key and id_key
+          const nameKey = keys[0];  // e.g., "投標廠商：投標廠商 1:廠商名稱"
+          const idKey = idKeys[0];  // e.g., "投標廠商：投標廠商 1:廠商代碼"
+          return nameKey.split(':')[1] === idKey.split(':')[1];
+        });
+
+        // Only count if this is our target company and they won the bid
+        return companyIdEntry?.[0] === companyId && keys.some((key: string) => key.includes(':得標廠商'));
+      });
+
+      if (!companyWonBid) {
+        return;  // Skip this record if the company didn't win the bid
+      }
+
       const year = record.date.toString().substring(0, 4);
       const unit = record.unit_name;
       const unitId = record.unit_id;
@@ -86,7 +133,7 @@ export default function Dashboard() {
       
       let page = 1;
       let keepFetching = true;
-      const allRecords: ProcurementRecord[] = [];
+      const allRecords: ProcurementData[] = [];
 
       while (keepFetching) {
         const response = await fetch(
@@ -103,7 +150,7 @@ export default function Dashboard() {
           break;
         }
 
-        const recentRecords = data.records.filter((r) => {
+        const recentRecords = data.records.filter((r: ProcurementData) => {
           const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
           return recordYear >= new Date().getFullYear() - 3;
         });
@@ -129,25 +176,27 @@ export default function Dashboard() {
     fetchData();
   }, [companyId]);
 
-  useEffect(() => {
-    const fetchUnitNames = async () => {
-      const newUnitNames: Record<string, string> = {};
-      
-      for (const unit of unitCounts) {
-        console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
-        if (isUnitId(unit.unit_name) && unit.unit_id) {
-          const actualName = await fetchUnitName(unit.unit_id);
-          console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
-          if (actualName) {
-            newUnitNames[unit.unit_name] = actualName;
-          }
+  const fetchUnitNames = async () => {
+    setFetchingNames(true);
+    const newUnitNames: Record<string, string> = {};
+    
+    for (const unit of unitCounts) {
+      console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
+      if (isUnitId(unit.unit_name) && unit.unit_id) {
+        const actualName = await fetchUnitName(unit.unit_id);
+        console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
+        if (actualName) {
+          newUnitNames[unit.unit_name] = actualName;
         }
       }
-      
-      console.log('Final unit names:', newUnitNames);
-      setUnitNames(newUnitNames);
-    };
+    }
+    
+    console.log('Final unit names:', newUnitNames);
+    setUnitNames(newUnitNames);
+    setFetchingNames(false);
+  };
 
+  useEffect(() => {
     if (unitCounts.length > 0) {
       fetchUnitNames();
     }
@@ -167,7 +216,7 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow-lg p-6">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-4">
-              這個行號拿了多少標案 Dashboard
+              Procurement Dashboard
             </h1>
             <form onSubmit={handleSubmit} className="flex gap-4">
               <div className="relative flex-1 max-w-xs">
@@ -185,6 +234,25 @@ export default function Dashboard() {
                   <Search size={20} />
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={fetchUnitNames}
+                disabled={fetchingNames || unitCounts.length === 0}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  fetchingNames || unitCounts.length === 0
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                }`}
+              >
+                {fetchingNames ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    Fetching Names...
+                  </span>
+                ) : (
+                  'Refresh Unit Names'
+                )}
+              </button>
             </form>
           </div>
 

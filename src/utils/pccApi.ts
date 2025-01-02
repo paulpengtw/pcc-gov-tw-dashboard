@@ -43,7 +43,7 @@ export default function Dashboard() {
         
         const tenderData = await tenderResponse.json();
         console.log('Tender data:', tenderData);
-        const unitName = tenderData.records?.[0]?.detail?.["機關資料：機關名稱"] || null;
+        const unitName = tenderData.records?.[0]?.detail?.["機關資料:機關名稱"] || null;
         console.log('Found unit name:', unitName);
         return unitName;
       }
