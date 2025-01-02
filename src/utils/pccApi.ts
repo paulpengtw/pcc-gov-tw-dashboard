@@ -12,6 +12,34 @@ const isUnitId = (unitName: string) => {
          /^[\d\.\-]+$/.test(unitName); // Pattern 3
 };
 
+interface CompanyNameKey {
+  [key: string]: string[];
+}
+
+interface CompanyIdKey {
+  [key: string]: string[];
+}
+
+interface Companies {
+  ids: string[];
+  names: string[];
+  id_key: CompanyIdKey;
+  name_key: CompanyNameKey;
+}
+
+interface Brief {
+  type: string;
+  title: string;
+  companies: Companies;
+}
+
+interface ProcurementData {
+  date: number;
+  brief: Brief;
+  unit_name: string;
+  unit_id: string;
+}
+
 export default function Dashboard() {
   const [companyId, setCompanyId] = useState('05076416');
   const [inputValue, setInputValue] = useState('05076416');
@@ -43,7 +71,7 @@ export default function Dashboard() {
         
         const tenderData = await tenderResponse.json();
         console.log('Tender data:', tenderData);
-        const unitName = tenderData.records?.[0]?.detail?.["機關資料:機關名稱"] || null;
+        const unitName = tenderData.records?.[0]?.detail?.["機關資料：機關名稱"] || null;
         console.log('Found unit name:', unitName);
         return unitName;
       }
@@ -54,10 +82,28 @@ export default function Dashboard() {
     }
   };
 
-  const processData = (records: ProcurementRecord[]) => {
+  const processData = (records: ProcurementData[]) => {
     const unitMap = new Map<string, UnitCount>();
 
     records.forEach((record) => {
+      // Check if the company won the bid
+      const companyWonBid = Object.entries(record.brief.companies.name_key).some(([name, keys]) => {
+        // Find the corresponding company ID
+        const companyIdEntry = Object.entries(record.brief.companies.id_key).find(([id, idKeys]) => {
+          // Match the bidder number (e.g., "投標廠商 1") between name_key and id_key
+          const nameKey = keys[0];  // e.g., "投標廠商：投標廠商 1:廠商名稱"
+          const idKey = idKeys[0];  // e.g., "投標廠商：投標廠商 1:廠商代碼"
+          return nameKey.split(':')[1] === idKey.split(':')[1];
+        });
+
+        // Only count if this is our target company and they won the bid
+        return companyIdEntry?.[0] === companyId && keys.some((key: string) => key.includes(':得標廠商'));
+      });
+
+      if (!companyWonBid) {
+        return;  // Skip this record if the company didn't win the bid
+      }
+
       const year = record.date.toString().substring(0, 4);
       const unit = record.unit_name;
       const unitId = record.unit_id;
@@ -66,18 +112,24 @@ export default function Dashboard() {
         unitMap.set(unit, {
           unit_name: unit,
           unit_id: unitId,
-          count: 0,
           years: {},
         });
       }
 
       const unitData = unitMap.get(unit)!;
-      unitData.count++;
       unitData.years[year] = (unitData.years[year] || 0) + 1;
     });
 
+    // Sort by sum of last three years
+    const currentYear = new Date().getFullYear();
+    const lastThreeYears = [currentYear - 2, currentYear - 1, currentYear];
+
     return Array.from(unitMap.values())
-      .sort((a, b) => b.count - a.count);
+      .sort((a, b) => {
+        const sumA = lastThreeYears.reduce((sum, year) => sum + (a.years[year] || 0), 0);
+        const sumB = lastThreeYears.reduce((sum, year) => sum + (b.years[year] || 0), 0);
+        return sumB - sumA;
+      });
   };
 
   const fetchData = async () => {
@@ -87,7 +139,7 @@ export default function Dashboard() {
       
       let page = 1;
       let keepFetching = true;
-      const allRecords: ProcurementRecord[] = [];
+      const allRecords: ProcurementData[] = [];
 
       while (keepFetching) {
         const response = await fetch(
@@ -104,7 +156,7 @@ export default function Dashboard() {
           break;
         }
 
-        const recentRecords = data.records.filter((r) => {
+        const recentRecords = data.records.filter((r: ProcurementData) => {
           const recordYear = parseInt(r.date.toString().slice(0, 4), 10);
           return recordYear >= new Date().getFullYear() - 3;
         });
@@ -170,7 +222,7 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow-lg p-6">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-4">
-              Procurement Dashboard
+              標案贏家 Dashboard
             </h1>
             <form onSubmit={handleSubmit} className="flex gap-4">
               <div className="relative flex-1 max-w-xs">
@@ -198,16 +250,32 @@ export default function Dashboard() {
                     : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
                 }`}
               >
-                {fetchingNames ? (
-                  <span className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    Fetching Names...
-                  </span>
-                ) : (
-                  'Refresh Unit Names'
-                )}
+                {fetchingNames ? 'Fetching Names...' : 'Refresh Unit Names'}
               </button>
             </form>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setInputValue('05076416')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                資策會
+              </button>
+              <button
+                type="button"
+                onClick={() => setInputValue('04170821')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                電腦公會
+              </button>
+              <button
+                type="button"
+                onClick={() => setInputValue('02750963')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                工研院
+              </button>
+            </div>
           </div>
 
           {loading && (
@@ -238,9 +306,6 @@ export default function Dashboard() {
                         {year}
                       </th>
                     ))}
-                    <th className="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Total
-                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -260,9 +325,6 @@ export default function Dashboard() {
                           {unit.years[year] || 0}
                         </td>
                       ))}
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {unit.count}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
