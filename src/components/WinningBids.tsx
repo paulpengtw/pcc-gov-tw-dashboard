@@ -30,6 +30,9 @@ interface WinningBid {
   tender_api_url: string;
   detail?: {
     url?: string;
+    budget?: string;
+    award_amount?: string;
+    is_huge_amount?: boolean;
   };
 }
 
@@ -98,14 +101,18 @@ export default function WinningBids() {
               );
               const tenderData = await tenderResponse.json();
               
-              if (tenderData.records?.[0]?.detail?.url) {
+              if (tenderData.records?.[0]) {
+                const tenderRecord = tenderData.records[0];
                 setWinningBids(prev => 
                   prev.map(bid => 
                     bid.job_number === record.job_number
                       ? {
                           ...bid,
                           detail: {
-                            url: tenderData.records[0].detail.url
+                            url: tenderRecord.detail?.url,
+                            budget: tenderRecord.detail?.["採購資料:預算金額"] || tenderRecord.detail?.["已公告資料:預算金額"],
+                            award_amount: tenderRecord.detail?.["決標資料:總決標金額"],
+                            is_huge_amount: tenderRecord.detail?.["採購資料:採購金額級距"]?.includes("巨額")
                           }
                         }
                       : bid
@@ -182,51 +189,62 @@ export default function WinningBids() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-4">Winning Bids Search</h1>
-        <div className="flex gap-4">
-          <div className="relative flex-1 max-w-md">
-            <input
-              type="text"
-              value={companyId}
-              onChange={(e) => setCompanyId(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                }
-              }}
-              placeholder="Enter Company ID"
-              className="w-full px-4 py-2 border rounded-lg pr-10"
-            />
-            <button
-              onClick={fetchWinningBids}
-              className="absolute right-2 top-1/2 -translate-y-1/2"
-              aria-label="Search"
-            >
-              <Search className="w-5 h-5 text-gray-500" />
-            </button>
+        <div className="flex flex-wrap items-start gap-4">
+          <div>
+            <div className="relative w-[320px] shrink-0">
+              <input
+                type="text"
+                value={companyId}
+                onChange={(e) => setCompanyId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder="Enter Company ID"
+                className="w-full px-4 py-2 border rounded-lg pr-10"
+              />
+              <button
+                onClick={fetchWinningBids}
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+                aria-label="Search"
+              >
+                <Search className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCompanyId('05076416')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                資策會
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompanyId('04170821')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                電腦公會
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompanyId('02750963')}
+                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+              >
+                工研院
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={() => setCompanyId('05076416')}
-            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-          >
-            資策會
-          </button>
-          <button
-            type="button"
-            onClick={() => setCompanyId('04170821')}
-            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-          >
-            電腦公會
-          </button>
-          <button
-            type="button"
-            onClick={() => setCompanyId('02750963')}
-            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-          >
-            工研院
-          </button>
+          <div className="bg-blue-50 p-4 rounded-lg w-[400px] shrink-0">
+            <h3 className="text-sm font-medium text-blue-900 mb-1">Description</h3>
+            <span className="text-sm text-amber-600">
+                數字只要是這個顏色
+            </span>
+            <span className="text-sm text-black-700">
+                就是巨額標案
+            </span>
+          </div>
         </div>
       </div>
 
@@ -245,9 +263,10 @@ export default function WinningBids() {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Number</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Award Amount</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -257,15 +276,6 @@ export default function WinningBids() {
                     {formatDate(bid.date)}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900">
-                    {bid.brief.title}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {bid.brief.type}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {unitNames[bid.unit_name] || bid.unit_name}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {bid.detail?.url ? (
                       <a 
                         href={bid.detail.url}
@@ -273,11 +283,23 @@ export default function WinningBids() {
                         rel="noopener noreferrer"
                         className="text-blue-600 hover:text-blue-800 hover:underline"
                       >
-                        {bid.job_number}
+                        {bid.brief.title}
                       </a>
                     ) : (
-                      bid.job_number
+                      bid.brief.title
                     )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {unitNames[bid.unit_name] || bid.unit_name}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${bid.detail?.is_huge_amount ? 'font-semibold text-amber-600' : 'text-gray-500'}`}>
+                    {bid.detail?.budget || '-'}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${bid.detail?.is_huge_amount ? 'font-semibold text-amber-600' : 'text-gray-500'}`}>
+                    {bid.detail?.award_amount || '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {bid.brief.type}
                   </td>
                 </tr>
               ))}
