@@ -62,8 +62,9 @@ export default function Dashboard() {
       console.log('First API response:', data);
       
       if (data.records && data.records.length > 0) {
-        console.log('Tender API URL:', data.records[0].tender_api_url);
-        const tenderResponse = await fetch(data.records[0].tender_api_url);
+        const tenderApiUrl = data.records[0].tender_api_url.replace('http://', 'https://');
+        console.log('Tender API URL:', tenderApiUrl);
+        const tenderResponse = await fetch(tenderApiUrl);
         if (!tenderResponse.ok) {
           console.log('Second API call failed for unit ID:', unitId);
           return null;
@@ -184,7 +185,6 @@ export default function Dashboard() {
 
   const fetchUnitNames = async () => {
     setFetchingNames(true);
-    const newUnitNames: Record<string, string> = {};
     
     for (const unit of unitCounts) {
       console.log('Checking unit:', unit.unit_name, 'isUnitId:', isUnitId(unit.unit_name));
@@ -192,13 +192,15 @@ export default function Dashboard() {
         const actualName = await fetchUnitName(unit.unit_id);
         console.log('Got actual name:', actualName, 'for unit:', unit.unit_name);
         if (actualName) {
-          newUnitNames[unit.unit_name] = actualName;
+          setUnitNames(prev => ({
+            ...prev,
+            [unit.unit_name]: actualName
+          }));
+          console.log(`${unit.unit_name} => ${actualName}`);
         }
       }
     }
     
-    console.log('Final unit names:', newUnitNames);
-    setUnitNames(newUnitNames);
     setFetchingNames(false);
   };
 
@@ -230,6 +232,12 @@ export default function Dashboard() {
                   type="text"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      setCompanyId(inputValue);
+                    }
+                  }}
                   placeholder="Enter Company ID"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
